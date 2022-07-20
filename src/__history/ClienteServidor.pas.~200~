@@ -1,0 +1,206 @@
+unit ClienteServidor;
+interface
+uses
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ComCtrls, Vcl.StdCtrls, Datasnap.DBClient, Data.DB,
+  Vcl.Grids, Vcl.DBGrids;
+
+type
+  TServidor = class
+  private
+    FPath: String;
+  public
+    constructor Create;
+    //Tipo do parâmetro não pode ser alterado
+    function SalvarArquivos(AData: OleVariant): Boolean;
+  end;
+
+  TfClienteServidor = class(TForm)
+    ProgressBar: TProgressBar;
+    btEnviarSemErros: TButton;
+    btEnviarComErros: TButton;
+    btEnviarParalelo: TButton;
+    procedure FormCreate(Sender: TObject);
+    procedure btEnviarSemErrosClick(Sender: TObject);
+    procedure btEnviarComErrosClick(Sender: TObject);
+    procedure FormClose(Sender: TObject; var Action: TCloseAction);
+  private
+    FPath: String;
+    FServidor: TServidor;
+    function InitDataset: TClientDataset;
+    procedure IniciarProgressBar(AMax: Integer);
+    procedure ExcluirArquivos(AIndex: Integer);
+  public
+  end;
+
+var
+  fClienteServidor: TfClienteServidor;
+
+const
+  QTD_ARQUIVOS_ENVIAR = 10;
+
+implementation
+
+uses
+  IOUtils;
+
+{$R *.dfm}
+
+procedure TfClienteServidor.btEnviarComErrosClick(Sender: TObject);
+var
+  cds: TClientDataset;
+  i, iIndex: Integer;
+begin
+  iIndex := 0;
+  cds := InitDataset;
+  IniciarProgressBar(QTD_ARQUIVOS_ENVIAR);
+  try
+    try
+      for i := 1 to QTD_ARQUIVOS_ENVIAR do
+      begin
+        cds.Append;
+        TBlobField(cds.FieldByName('Arquivo')).LoadFromFile(FPath);
+        TIntegerField(cds.FieldByName('id')).AsInteger := i;
+        cds.Post;
+
+        {$REGION Simulação de erro, não alterar}
+        if i = (QTD_ARQUIVOS_ENVIAR/2) then
+          FServidor.SalvarArquivos(NULL);
+        {$ENDREGION}
+
+        try
+          FServidor.SalvarArquivos(cds.Data);
+        finally
+          cds.EmptyDataSet;
+        end;
+
+        iIndex := i;
+        ProgressBar.Position := ProgressBar.Position + 1;
+      end;
+    finally
+      cds.Free;
+    end;
+  except
+    ExcluirArquivos(iIndex);
+  end;
+end;
+
+procedure TfClienteServidor.btEnviarSemErrosClick(Sender: TObject);
+var
+  cds: TClientDataset;
+  i: Integer;
+begin
+  try
+    cds := InitDataset;
+    try
+      for i := 1 to QTD_ARQUIVOS_ENVIAR do
+      begin
+        cds.Append;
+        TBlobField(cds.FieldByName('Arquivo')).LoadFromFile(String(FPath));
+        TIntegerField(cds.FieldByName('id')).AsInteger := i;
+        cds.Post;
+
+        try
+          FServidor.SalvarArquivos(cds.Data);
+        finally
+          cds.EmptyDataSet;
+        end;
+
+        ProgressBar.Position := ProgressBar.Position + 1;
+      end;
+    finally
+      FreeAndNil(cds);
+    end;
+  except
+    on E: Exception do
+      ShowMessage('Ocorreu um erro ao enviar os arquivos ao servidor!' + sLineBreak + sLineBreak + E.Message);
+  end;
+end;
+
+procedure TfClienteServidor.ExcluirArquivos(AIndex: Integer);
+var
+  i: Integer;
+  sPath: string;
+begin
+  sPath := ExtractFilePath(ParamStr(0)) + 'Servidor\';
+  for i := AIndex downto 0 do
+    if FileExists(FPath + I.ToString + '.pdf') then
+      DeleteFile(FPath + I.ToString + '.pdf');
+end;
+
+procedure TfClienteServidor.FormClose(Sender: TObject;
+  var Action: TCloseAction);
+begin
+  if (FServidor <> nil) then
+    FreeAndNil(FServidor);
+end;
+
+procedure TfClienteServidor.FormCreate(Sender: TObject);
+begin
+  inherited;
+  FPath := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'pdf.pdf';
+  FServidor := TServidor.Create;
+end;
+
+procedure TfClienteServidor.IniciarProgressBar(AMax: Integer);
+begin
+  ProgressBar.Min := 0;
+  ProgressBar.Max := AMax;
+  ProgressBar.Position := 0;
+end;
+
+function TfClienteServidor.InitDataset: TClientDataset;
+begin
+  Result := TClientDataset.Create(nil);
+  Result.FieldDefs.Add('Arquivo', ftBlob);
+  Result.FieldDefs.Add('id', ftInteger);
+  Result.CreateDataSet;
+end;
+
+{ TServidor }
+
+constructor TServidor.Create;
+begin
+  FPath := ExtractFilePath(ParamStr(0)) + 'Servidor\';
+end;
+
+function TServidor.SalvarArquivos(AData: OleVariant): Boolean;
+var
+  cds: TClientDataSet;
+  FileName: string;
+begin
+  Result := False;
+  try
+    cds := TClientDataset.Create(nil);
+    try
+      cds.Data := AData;
+
+      {$REGION Simulação de erro, não alterar}
+      if cds.RecordCount = 0 then
+        Exit;
+      {$ENDREGION}
+
+      if not DirectoryExists(FPath) then
+        ForceDirectories(FPath);
+
+      cds.First;
+      while not cds.Eof do
+      begin
+        FileName := String(FPath) + TIntegerField(cds.FieldByName('id')).AsString + '.pdf';
+
+        if TFile.Exists(FileName) then
+          TFile.Delete(FileName);
+
+        TBlobField(cds.FieldByName('Arquivo')).SaveToFile(FileName);
+        cds.Next;
+      end;
+      Result := True;
+    finally
+      cds.Free;
+    end;
+  except
+      raise;
+  end;
+end;
+
+end.
